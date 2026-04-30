@@ -76,3 +76,4 @@ car_price_project/
 - Python 3.10
 - pandas
 - scikit-learn (`RandomForestRegressor`, `SimpleImputer`, `OrdinalEncoder`, `OneHotEncoder`)
+- Claude Sonnet 4.6
