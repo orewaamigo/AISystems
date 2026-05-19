@@ -1,27 +1,52 @@
 ﻿using Microsoft.Extensions.AI;
-using OllamaSharp;
 using Telegram.Bot;
 using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Globalization;
+using System.Text.RegularExpressions;
+
+var token = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN") 
+    ?? throw new InvalidOperationException("Переменная TELEGRAM_BOT_TOKEN не установлена");
 
 using var cts = new CancellationTokenSource();
-var bot = new TelegramBotClient(
-    Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN") 
-    ?? throw new InvalidOperationException("TELEGRAM_BOT_TOKEN не установлен"),
-    cancellationToken: cts.Token
-);var me = await bot.GetMe();
 
-IChatClient chatClient = ((IChatClient)new OllamaApiClient(new Uri("http://localhost:11434")))
-    .AsBuilder()
-    .Build();
-
-var chatOptions = new ChatOptions
+void ValidateTelegramTokenOrThrow(string rawToken)
 {
-    ModelId = "gemma4:latest",
-};
+    var t = rawToken.Trim();
+
+    if (string.Equals(t, "ТВОЙ_ТОКЕН", StringComparison.OrdinalIgnoreCase) ||
+        t.Contains("YOUR_TOKEN", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "TELEGRAM_BOT_TOKEN выглядит как заглушка ('ТВОЙ_ТОКЕН'). Укажи реальный токен из BotFather.");
+    }
+
+    // Простейшая проверка формата токена бота: <digits>:<secret>
+    // (секрет обычно длинный, состоит из A-Z/a-z/0-9/_-)
+    if (!Regex.IsMatch(t, @"^\d+:[A-Za-z0-9_-]{20,}$"))
+    {
+        throw new InvalidOperationException(
+            "TELEGRAM_BOT_TOKEN не похож на токен Telegram-бота. Ожидается формат вроде '123456:ABC...'. " +
+            "Скопируй токен из BotFather без лишних пробелов.");
+    }
+}
+
+ValidateTelegramTokenOrThrow(token);
+var bot = new TelegramBotClient(token);
+User me;
+try
+{
+    me = await bot.GetMeAsync(cts.Token);
+}
+catch (Telegram.Bot.Exceptions.ApiRequestException ex) when (ex.Message.Contains("Not Found", StringComparison.OrdinalIgnoreCase))
+{
+    throw new InvalidOperationException(
+        "Telegram API вернул 'Not Found' на GetMeAsync. Почти всегда это значит, что токен бота неверный/отозван.\n" +
+        "Проверь, что TELEGRAM_BOT_TOKEN содержит реальный токен из BotFather (формат примерно '123456:ABC...'), " +
+        "и что ты не оставил значение 'ТВОЙ_ТОКЕН'.",
+        ex);
+}
 
 const string SystemPrompt =
     "Говори как Оптимус Прайм. " +
@@ -29,37 +54,90 @@ const string SystemPrompt =
 
 Dictionary<long, List<ChatMessage>> conversations = new();
 
-bot.OnMessage += OnMessage;
+// Простой polling
+int offset = 0;
 Console.WriteLine($"@{me.Username} is running... Press Enter to terminate");
+var pollTask = PollForUpdates();
+
 Console.ReadLine();
 cts.Cancel();
+await pollTask;
 
-async Task OnMessage(Message msg, UpdateType type)
+async Task PollForUpdates()
 {
-    if (msg.Text is null) return;
-
-    if (!conversations.ContainsKey(msg.Chat.Id))
-        conversations[msg.Chat.Id] = [new ChatMessage(ChatRole.System, SystemPrompt)];
-
-    var history = conversations[msg.Chat.Id];
-    history.Add(new ChatMessage(ChatRole.User, msg.Text));
-
-    var statusMsg = await bot.SendMessage(msg.Chat.Id, "Думаю...");
-
-    try
+    using var httpClient = new HttpClient();
+    
+    while (!cts.Token.IsCancellationRequested)
     {
-        var response = await chatClient.GetResponseAsync(history, chatOptions, cts.Token);
-        history.AddMessages(response);
+        try
+        {
+            var updates = await bot.GetUpdatesAsync(offset, cancellationToken: cts.Token);
+            
+            foreach (var update in updates)
+            {
+                offset = update.Id + 1;
+                if (update.Message?.Text is null) continue;
 
-        var text = response.Text;
-        await bot.EditMessageText(msg.Chat.Id, statusMsg.Id,
-            string.IsNullOrEmpty(text) ? "..." : text);
+                var msg = update.Message;
+                if (!conversations.ContainsKey(msg.Chat.Id))
+                    conversations[msg.Chat.Id] = [new ChatMessage(ChatRole.System, SystemPrompt)];
+
+                var history = conversations[msg.Chat.Id];
+                history.Add(new ChatMessage(ChatRole.User, msg.Text));
+
+                var statusMsg = await bot.SendTextMessageAsync(msg.Chat.Id, "Думаю...", cancellationToken: cts.Token);
+
+                try
+                {
+                    // Запрос к Ollama через HTTP API
+                    var prompt = string.Join("\n", history.Select(m => $"{m.Role}: {m.Text}"));
+                    var response = await QueryOllama(httpClient, prompt, cts.Token);
+                    
+                    var text = response ?? "...";
+                    if (!string.IsNullOrEmpty(text))
+                        history.Add(new ChatMessage(ChatRole.Assistant, text));
+
+                    await bot.EditMessageTextAsync(msg.Chat.Id, statusMsg.MessageId,
+                        string.IsNullOrEmpty(text) ? "..." : text, cancellationToken: cts.Token);
+                }
+                catch (Exception ex)
+                {
+                    await bot.EditMessageTextAsync(msg.Chat.Id, statusMsg.MessageId, 
+                        $"Ошибка: {ex.Message}", cancellationToken: cts.Token);
+                    Console.Error.WriteLine(ex);
+                }
+            }
+
+            await Task.Delay(500, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            break;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Ошибка polling: {ex.Message}");
+            await Task.Delay(1000, cts.Token);
+        }
     }
-    catch (Exception ex)
-    {
-        await bot.EditMessageText(msg.Chat.Id, statusMsg.Id, $"Ошибка: {ex.Message}");
-        Console.Error.WriteLine(ex);
-    }
+}
+
+async Task<string> QueryOllama(HttpClient client, string prompt, CancellationToken ct)
+{
+    var request = new { model = "gemma4:latest", prompt = prompt, stream = false };
+    var jsonContent = new StringContent(JsonSerializer.Serialize(request), System.Text.Encoding.UTF8, "application/json");
+    
+    var response = await client.PostAsync("http://localhost:11434/api/generate", jsonContent, ct);
+    response.EnsureSuccessStatusCode();
+    
+    var jsonResponse = await response.Content.ReadAsStringAsync(ct);
+    using var doc = JsonDocument.Parse(jsonResponse);
+    var root = doc.RootElement;
+    
+    if (root.TryGetProperty("response", out var responseProp))
+        return responseProp.GetString() ?? "";
+    
+    return "";
 }
 
 static class BotTools
@@ -78,17 +156,23 @@ static class BotTools
 
             var sb = new System.Text.StringBuilder();
 
-            var answer = root.GetProperty("Answer").GetString();
-            if (!string.IsNullOrWhiteSpace(answer))
-                sb.AppendLine(answer);
-
-            var abstractText = root.GetProperty("AbstractText").GetString();
-            if (!string.IsNullOrWhiteSpace(abstractText))
-                sb.AppendLine(abstractText);
-
-            if (sb.Length == 0)
+            if (root.TryGetProperty("Answer", out var answerProp))
             {
-                foreach (var topic in root.GetProperty("RelatedTopics").EnumerateArray().Take(5))
+                var answer = answerProp.GetString();
+                if (!string.IsNullOrWhiteSpace(answer))
+                    sb.AppendLine(answer);
+            }
+
+            if (root.TryGetProperty("AbstractText", out var abstractProp))
+            {
+                var abstractText = abstractProp.GetString();
+                if (!string.IsNullOrWhiteSpace(abstractText))
+                    sb.AppendLine(abstractText);
+            }
+
+            if (sb.Length == 0 && root.TryGetProperty("RelatedTopics", out var topicsProp))
+            {
+                foreach (var topic in topicsProp.EnumerateArray().Take(5))
                 {
                     if (topic.TryGetProperty("Text", out var t) && !string.IsNullOrWhiteSpace(t.GetString()))
                         sb.AppendLine($"• {t.GetString()}");
