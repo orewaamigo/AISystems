@@ -1,0 +1,46 @@
+# Visual Studio
+.vs/
+.vscode/
+*.user
+*.sln.user
+
+# Build results
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.so
+*.dylib
+
+# NuGet
+*.nupkg
+*.snupkg
+*.nuget.props
+*.nuget.targets
+
+# User Secrets
+secrets.json
+
+# Environment variables
+.env
+.env.local
+
+# Node modules
+node_modules/
+package-lock.json
+
+# OS files
+.DS_Store
+Thumbs.db
+*.log
+
+# Misc
+.classpath
+.c9/
+*.cover
+.hypothesis/
+*.mo
+*.pot
+*~
+.Python

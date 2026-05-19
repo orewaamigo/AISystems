@@ -8,8 +8,11 @@ using System.Text.Json;
 using System.Globalization;
 
 using var cts = new CancellationTokenSource();
-var bot = new TelegramBotClient("8549128658:AAGYVqMpgV6ziJ4s1ivRPcFDNRNay1VhFZU", cancellationToken: cts.Token);
-var me = await bot.GetMe();
+var bot = new TelegramBotClient(
+    Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN") 
+    ?? throw new InvalidOperationException("TELEGRAM_BOT_TOKEN не установлен"),
+    cancellationToken: cts.Token
+);var me = await bot.GetMe();
 
 IChatClient chatClient = ((IChatClient)new OllamaApiClient(new Uri("http://localhost:11434")))
     .AsBuilder()
