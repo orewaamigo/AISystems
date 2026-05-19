@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "dgSpecHash": "WaSFRKBorTE=",
+  "success": false,
+  "projectFilePath": "D:\\it\\msu\\AISystems\\HomeWork2\\HomeWork2.csproj",
+  "expectedPackageFiles": [],
+  "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Failed to retrieve information about 'Microsoft.Extensions.AI' from remote source 'https://api.nuget.org/v3-flatcontainer/microsoft.extensions.ai/index.json'.\r\n  No such host is known. (api.nuget.org:443)\r\n  No such host is known.",
+      "projectPath": "D:\\it\\msu\\AISystems\\HomeWork2\\HomeWork2.csproj",
+      "filePath": "D:\\it\\msu\\AISystems\\HomeWork2\\HomeWork2.csproj",
+      "targetGraphs": []
+    }
+  ]
+}
