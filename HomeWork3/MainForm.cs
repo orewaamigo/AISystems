@@ -550,7 +550,7 @@ public class MainForm : Form
         }
         catch (HttpRequestException)
         {
-            ReplaceTyping("Не могу подключиться к LM Studio. Убедись, что сервер запущен на порту 1234.");
+            ReplaceTyping($"Не могу подключиться к серверу {_serverUrl}. Убедись, что сервер запущен.");
             SetEnabled(true);
             return;
         }
