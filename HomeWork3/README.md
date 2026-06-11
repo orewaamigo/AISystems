@@ -33,9 +33,7 @@ LM Studio (локальная LLM у студента) получает запр
 | WinForms | встроен | интерфейс |
 | [OpenCvSharp4](https://github.com/shimat/opencvsharp) | 4.9.0 | обработка изображений |
 | [LM Studio](https://lmstudio.ai/) | любая | локальный LLM-сервер (OpenAI-совместимый API) |
-| [ngrok](https://ngrok.com/) | любая | (опционально) туннель для удалённого доступа к серверу |
 
-Сервером может выступать любой OpenAI-совместимый бэкенд — LM Studio, Ollama или сам OpenAI. URL и модель меняются в окне настроек (⚙).
 
 ---
 
